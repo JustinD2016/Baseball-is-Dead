@@ -16,7 +16,6 @@ st.set_page_config(
 # ── Tech theme (augments dark config.toml) ───────────────────────────────────
 st.markdown("""
 <style>
-/* Gradient headline */
 .suite-title {
     background: linear-gradient(135deg, #00d4ff 0%, #7b68ee 100%);
     -webkit-background-clip: text;
@@ -42,8 +41,6 @@ st.markdown("""
     border-bottom: 1px solid rgba(0,212,255,0.12);
     margin-bottom: 0.6rem;
 }
-
-/* Tabs */
 .stTabs [data-baseweb="tab-list"] {
     gap: 2px;
     background: #0d1530;
@@ -70,8 +67,6 @@ st.markdown("""
     height: 2px !important;
     border-radius: 1px;
 }
-
-/* Buttons */
 .stButton > button {
     background: rgba(0,212,255,0.07);
     border: 1px solid rgba(0,212,255,0.28);
@@ -86,8 +81,6 @@ st.markdown("""
     box-shadow: 0 0 10px rgba(0,212,255,0.22);
     transform: translateY(-1px);
 }
-
-/* Section headers inside tabs */
 h4 {
     color: #00d4ff !important;
     font-size: 0.78rem !important;
@@ -95,17 +88,11 @@ h4 {
     letter-spacing: 0.12em;
     margin-bottom: 0.6rem !important;
 }
-
-/* Dividers */
 hr { border-color: rgba(0,212,255,0.12) !important; }
-
-/* Custom scrollbar */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: #0a0f1e; }
 ::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.25); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0,212,255,0.55); }
-
-/* Hide the sidebar toggle — we don't use the sidebar */
 [data-testid="collapsedControl"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -115,22 +102,107 @@ from src.db import (
     get_year_range, get_batting_stats, get_pitching_stats,
     get_batting_zscores, get_pitching_zscores, query_df,
 )
-from src.stats import (
-    BATTING_STATS, PITCHING_STATS, BATTER_POSITIONS,
-    DEFAULT_BATTING_STATS, DEFAULT_BATTING_WEIGHTS,
-    DEFAULT_PITCHING_STATS, DEFAULT_PITCHING_WEIGHTS,
-)
+from src.stats import BATTING_STATS, PITCHING_STATS, BATTER_POSITIONS
 from src.ranking import rank_batters, rank_pitchers
-from src.ui import render_sidebar, render_stat_controls, render_results
+from src.ui import render_stat_controls, render_results
 
+# ── Chart palette & layout ────────────────────────────────────────────────────
+PALETTE = [
+    "#00d4ff", "#7b68ee", "#ff6b9d", "#ffa600", "#00ff88",
+    "#ff4560", "#26e7a6", "#febc3b", "#775dd0", "#3f51b5",
+    "#00b1f2", "#f48024", "#d7263d", "#02c39a", "#f7b731",
+]
+
+_LAYOUT = dict(
+    template="plotly_dark",
+    paper_bgcolor="rgba(10,15,30,0)",
+    plot_bgcolor="rgba(13,21,48,0.55)",
+    height=500,
+    font=dict(family="system-ui, sans-serif", size=12, color="#8892a4"),
+    legend=dict(
+        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+        font=dict(color="#c0c8d8"),
+    ),
+    xaxis=dict(
+        gridcolor="rgba(0,212,255,0.07)",
+        linecolor="rgba(0,212,255,0.18)",
+        tickfont=dict(color="#8892a4"),
+    ),
+    yaxis=dict(
+        gridcolor="rgba(0,212,255,0.07)",
+        linecolor="rgba(0,212,255,0.18)",
+        tickfont=dict(color="#8892a4"),
+    ),
+    margin=dict(l=10, r=10, t=58, b=10),
+)
+
+
+def line_chart(traces, title, x_lbl, y_lbl):
+    fig = go.Figure()
+    for t in traces:
+        fig.add_trace(t)
+    fig.update_layout(
+        **_LAYOUT,
+        title=dict(text=title, font=dict(color="#c0c8d8", size=13)),
+        xaxis_title=x_lbl,
+        yaxis_title=y_lbl,
+    )
+    return fig
+
+
+def scatter_trace(x, y, name, color):
+    return go.Scatter(
+        x=x, y=y, mode="lines+markers", name=name,
+        line=dict(color=color, width=2),
+        marker=dict(size=4, color=color),
+    )
+
+
+# ── Stat column maps for career explorer tabs ─────────────────────────────────
+BATTER_STAT_COLS = {
+    "Hits": "H", "Doubles": "2B", "Triples": "3B", "Home Runs": "HR",
+    "Runs": "R", "RBI": "RBI", "Stolen Bases": "SB",
+    "Walks": "BB", "Strikeouts": "SO", "GIDP": "GIDP",
+    "Average": "BA", "On-Base %": "OBP", "Slugging": "SLG", "OPS": "OPS",
+}
+BATTER_RATE_STATS = {"Average", "On-Base %", "Slugging", "OPS"}
+
+PITCHER_STAT_COLS = {
+    "Strikeouts": "SO", "Walks": "BB", "Hits Allowed": "H", "HR Allowed": "HR",
+    "Wins": "W", "Losses": "L", "Saves": "SV", "Innings Pitched": "IP",
+    "ERA": "ERA", "WHIP": "WHIP", "K/9": "K9", "BB/9": "BB9",
+}
+PITCHER_RATE_STATS = {"ERA", "WHIP", "K/9", "BB/9"}
+
+LEAGUE_BAT_COLS = {
+    "Batting Average": "BA_mean",
+    "On-Base %": "OBP_mean",
+    "Slugging": "SLG_mean",
+    "OPS": "OPS_mean",
+    "HR per player": "HR_mean",
+    "Runs per player": "R_mean",
+    "Hits per player": "H_mean",
+    "Walks per player": "BB_mean",
+    "Strikeouts per player": "SO_mean",
+}
+LEAGUE_PIT_COLS = {
+    "ERA": "ERA_mean",
+    "WHIP": "WHIP_mean",
+    "K/9": "K9_mean",
+    "BB/9": "BB9_mean",
+    "Wins per pitcher": "W_mean",
+    "K per pitcher": "SO_mean",
+    "Saves per pitcher": "SV_mean",
+    "CG per pitcher": "CG_mean",
+}
 
 # ── Player lookup (DB-backed) ─────────────────────────────────────────────────
-def _norm(s: str) -> str:
+def _norm(s):
     return unicodedata.normalize("NFC", s).lower().strip() if isinstance(s, str) else ""
 
 
 @st.cache_data(ttl=3600)
-def _find_ids(first: str, last: str) -> list:
+def _find_ids(first, last):
     df = query_df(
         "SELECT playerID FROM people WHERE LOWER(nameFirst)=? AND LOWER(nameLast)=?",
         (first, last),
@@ -138,7 +210,7 @@ def _find_ids(first: str, last: str) -> list:
     return df["playerID"].tolist()
 
 
-def resolve_player(name: str, table: str) -> str | None:
+def resolve_player(name, table):
     parts = name.strip().split()
     if len(parts) < 2:
         return None
@@ -155,48 +227,49 @@ def resolve_player(name: str, table: str) -> str | None:
 
 
 @st.cache_data(ttl=3600)
-def get_player_batting(pid: str) -> pd.DataFrame:
+def get_player_batting(pid):
     return query_df(
         "SELECT * FROM batting_consolidated WHERE playerID=? ORDER BY yearID", (pid,)
     )
 
 
 @st.cache_data(ttl=3600)
-def get_player_pitching(pid: str) -> pd.DataFrame:
+def get_player_pitching(pid):
     return query_df(
         "SELECT * FROM pitching_consolidated WHERE playerID=? ORDER BY yearID", (pid,)
     )
 
 
 @st.cache_data(ttl=3600)
-def get_league_batting_trends() -> pd.DataFrame:
+def get_league_batting_trends():
     return query_df("SELECT * FROM league_avg_batting ORDER BY yearID")
 
 
 @st.cache_data(ttl=3600)
-def get_league_pitching_trends() -> pd.DataFrame:
+def get_league_pitching_trends():
     return query_df("SELECT * FROM league_avg_pitching ORDER BY yearID")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def col_series(df: pd.DataFrame, col: str) -> pd.Series:
+def col_series(df, col):
     return df[col].reset_index(drop=True) if col in df.columns else pd.Series([None] * len(df))
 
 
-def fmt_val(v: float) -> str:
+def fmt_val(v):
     return f"{v:,.0f}" if abs(v) >= 1_000 else f"{v:.1f}"
 
 
-def build_suffix(name: str, s: pd.Series, cumulative: bool, is_rate: bool) -> str:
+def build_suffix(name, s, cumulative, is_rate):
     if cumulative and not is_rate:
         return f"{name}: Total {fmt_val(s.iloc[-1])}"
     return f"{name}: Avg {s.mean():.3f}" if is_rate else f"{name}: Avg {fmt_val(s.mean())}"
 
 
 # ── Session state ─────────────────────────────────────────────────────────────
-for _k, _d in [("colors_b", [PALETTE[0], PALETTE[1]]), ("colors_p", [PALETTE[0], PALETTE[1]])]:
-    if _k not in st.session_state:
-        st.session_state[_k] = _d
+if "colors_b" not in st.session_state:
+    st.session_state.colors_b = [PALETTE[0], PALETTE[1]]
+if "colors_p" not in st.session_state:
+    st.session_state.colors_p = [PALETTE[0], PALETTE[1]]
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -213,7 +286,7 @@ except Exception:
     st.error("Cannot open `data/lahman.db`. Run `python scripts/build_db.py` to build it.")
     st.stop()
 
-# ── Tab layout ────────────────────────────────────────────────────────────────
+# ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_rank, tab_bat, tab_pit, tab_lg, tab_about = st.tabs([
     "🏆 Player Ranker",
     "🏏 Batters",
@@ -246,85 +319,62 @@ with tab_rank:
         top_n = st.slider("Players to show", 5, 50, 25)
         st.divider()
 
-    mode = config["mode"]
-    start_year = config["start_year"]
-    end_year = config["end_year"]
-    position = config["position"]
-    top_n = config["top_n"]
-    min_pa = config["min_pa"]
-    min_ip = config["min_ip"]
-
-        st.markdown("**Stats & weights**")
+        st.markdown("**Qualification**")
         if mode == "Batters":
-            stat_defs = BATTING_STATS
-            def_stats = DEFAULT_BATTING_STATS
-            def_wts = DEFAULT_BATTING_WEIGHTS
+            min_pa = st.number_input("Min plate appearances", 50, 5_000, 500, step=50)
+            min_ip = 30
         else:
-            stat_defs = PITCHING_STATS
-            def_stats = DEFAULT_PITCHING_STATS
-            def_wts = DEFAULT_PITCHING_WEIGHTS
-
-    # Stat selection and weights on main page
-    selected_stats, weights = render_stat_controls(mode)
-
-    st.divider()
-
-    if mode == "Batters":
-        stat_defs = BATTING_STATS
-
-        wts = {}
-        st.markdown("*Weights — normalized to 100%*")
-        for sk in sel:
-            wts[sk] = st.slider(
-                stat_defs[sk].short_name, 0, 100,
-                def_wts.get(sk, 100 // len(sel)),
-                key=f"rw_{sk}",
-            )
-        total_w = sum(wts.values())
-        if total_w > 0:
-            st.caption(", ".join(
-                f"{stat_defs[s].short_name} {wts[s]*100//total_w}%"
-                for s in sel if wts[s] > 0
-            ))
-        else:
-            st.warning("All weights are zero.")
+            min_ip = st.number_input("Min innings pitched", 10, 3_000, 100, step=10)
+            min_pa = 100
 
     with main:
+        # Stat selection chips + weight sliders (rendered inline by render_stat_controls)
+        selected_stats, weights = render_stat_controls(mode)
+        st.divider()
+
         pos_tag = f" · {position}" if mode == "Batters" and position != "All" else ""
         st.markdown(f"**Top {top_n} {mode.lower()}** · {start_yr}–{end_yr}{pos_tag}")
 
         if mode == "Batters":
+            stat_defs = BATTING_STATS
             with st.spinner("Loading…"):
                 raw = get_batting_stats(start_yr, end_yr, position, min_pa)
                 zsc = get_batting_zscores(start_yr, end_yr, position, min_pa)
             if zsc.empty:
                 st.warning("No qualifying batters. Lower min PA or expand the year range.")
             else:
-                render_results(rank_batters(zsc, raw, sel, wts, top_n), sel, stat_defs, mode)
+                render_results(
+                    rank_batters(zsc, raw, selected_stats, weights, top_n),
+                    selected_stats, stat_defs, mode,
+                )
         else:
+            stat_defs = PITCHING_STATS
             with st.spinner("Loading…"):
                 raw = get_pitching_stats(start_yr, end_yr, min_ip)
                 zsc = get_pitching_zscores(start_yr, end_yr, min_ip)
             if zsc.empty:
                 st.warning("No qualifying pitchers. Lower min IP or expand the year range.")
             else:
-                render_results(rank_pitchers(zsc, raw, sel, wts, top_n), sel, stat_defs, mode)
+                render_results(
+                    rank_pitchers(zsc, raw, selected_stats, weights, top_n),
+                    selected_stats, stat_defs, mode,
+                )
 
         with st.expander("How does the ranking work?"):
-            st.markdown("""
+            st.markdown(f"""
 **Z-Score Normalization** — `z = (value − era_mean) / era_std` per season. Every stat is
-expressed as standard deviations above the league average *for that year*, making a 1927
-slugger directly comparable to a 2015 hitter.
+expressed in standard deviations above the league average *for that year*, so a 1927
+slugger and a 2015 hitter are directly comparable.
 
 **PA / IP Weighting** — z-scores are averaged across seasons weighted by plate appearances
 (batters) or innings pitched (pitchers), so a full 162-game season counts more than a brief
 stint.
 
-**Composite Score** — your sliders set relative importance. Weights are normalized to 100%
-and blended into one number. Higher is always better (ERA, WHIP, BB/9 are inverted).
+**Rating (100+ scale)** — the weighted composite z-score is converted to a 100-based
+scale (like OPS+ or ERA+): 100 = league average, 200 = 100% above average, etc.
 
 *Data: Lahman Baseball Database · Chadwick Bureau · 1871–{max_db_yr}.*
-""".format(max_db_yr=max_db_yr))
+""")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -357,7 +407,6 @@ with tab_bat:
 
             col = BATTER_STAT_COLS[b_stat]
             is_rate = b_stat in BATTER_RATE_STATS
-
             x1 = list(range(1, len(df1) + 1)) if b_career else df1["yearID"].tolist()
             x_lbl = "Career Year" if b_career else "Season"
             s1 = col_series(df1, col)
@@ -415,11 +464,8 @@ with tab_pit:
                 st.warning(f'"{p_p2}" not found — showing {p_p1} only.')
             df2 = get_player_pitching(pid2) if pid2 else None
 
-        **Rating (100+ scale)**: Your selected stats are weighted according to the sliders
-        above the results table. The weights are normalized to sum to 100%. The final
-        rating uses a 100-based scale like OPS+ or ERA+: 100 = league average,
-        150 = 50% better than average, 200 = twice as good as average.
-
+            col = PITCHER_STAT_COLS[p_stat]
+            is_rate = p_stat in PITCHER_RATE_STATS
             x1 = list(range(1, len(df1) + 1)) if p_career else df1["yearID"].tolist()
             x_lbl = "Career Year" if p_career else "Season"
             s1 = col_series(df1, col)
@@ -514,10 +560,10 @@ with tab_lg:
 
             with st.expander("About this view"):
                 st.markdown("""
-League averages are computed from **qualified players only** (batters ≥100 PA per season;
-pitchers ≥30 IP per season), so they reflect the typical *good* player rather than
-roster-filler. The shaded band spans ±1 standard deviation — a wider band means
-greater spread in performance that year (often a sign of rule changes or an era in flux).
+League averages are computed from **qualified players only** (batters ≥100 PA;
+pitchers ≥30 IP per season). The shaded band spans ±1 standard deviation — a wider
+band means greater spread in performance that year, often a sign of rule changes or
+an era in flux.
 """)
 
 
@@ -532,18 +578,19 @@ with tab_about:
         st.markdown("""
 Era-adjusted ranking using z-score normalization. Every stat is converted to
 "standard deviations above the league mean for that season," so a 1920s slugger
-and a modern DH compete on the same scale.
+and a modern DH compete on the same scale. Scores are expressed on a 100+ scale
+(like OPS+ or ERA+).
 
-- Configurable stat selection and per-stat weighting
+- Add / remove stats with the chip selector
+- Per-stat weight sliders
 - Supports all fielding positions and custom year windows
 - PA / IP weighting rewards full-season performance
-- Results update instantly as you adjust controls
 """)
         st.markdown("### 🏏 / ⚾  Career Explorer")
         st.markdown("""
 Year-by-year career arc charting for any player in the Lahman database.
 
-- Compare two players side by side on one chart
+- Compare two players side by side
 - Align by **calendar year** or **career year** (rookie year = Year 1)
 - Toggle cumulative totals for counting stats
 - 15-color palette with one-click randomization
@@ -552,9 +599,9 @@ Year-by-year career arc charting for any player in the Lahman database.
     with c2:
         st.markdown("### 📈 League Trends")
         st.markdown("""
-Track how the game has evolved over 150+ years. Batting averages, strikeout rates,
-ERA, WHIP — plotted with an optional standard-deviation band to show how spread out
-performance was in each era.
+Track how the game has evolved over 150+ years. Batting averages, strikeout
+rates, ERA, WHIP — plotted with an optional standard-deviation band to show
+how spread out performance was in each era.
 """)
         st.markdown("### 🗄️ Data")
         st.markdown(f"""
@@ -565,15 +612,12 @@ Licensed under [CC BY-SA 3.0](http://creativecommons.org/licenses/by-sa/3.0/)
 Distributed by the [Chadwick Bureau](https://github.com/chadwickbureau/baseballdatabank)
 
 All data is served from a local SQLite database (`data/lahman.db`).
-To rebuild it from the latest upstream CSVs, run:
-```
-python scripts/build_db.py
-```
+To rebuild: `python scripts/build_db.py`
 """)
         st.markdown("### How to Use")
         st.markdown("""
-1. **Player Ranker** — Adjust stat weights and filters in the left panel.
-2. **Batters / Pitchers** — Type a player name (*First Last*), pick a stat, and
-   optionally add a second player to compare.
-3. **League Trends** — Choose a stat category and drag the year slider.
+1. **Player Ranker** — Filters on the left, stat chips + weight sliders above the table.
+2. **Batters / Pitchers** — Type a player name (*First Last*), pick a stat, optionally
+   add a second player to compare.
+3. **League Trends** — Choose batting or pitching, pick a stat, drag the year slider.
 """)
