@@ -121,97 +121,7 @@ from src.stats import (
     DEFAULT_PITCHING_STATS, DEFAULT_PITCHING_WEIGHTS,
 )
 from src.ranking import rank_batters, rank_pitchers
-from src.ui import render_results
-
-# ── Chart palette & shared layout ────────────────────────────────────────────
-PALETTE = [
-    "#00d4ff", "#7b68ee", "#ff6b9d", "#ffa600", "#00ff88",
-    "#ff4560", "#26e7a6", "#febc3b", "#775dd0", "#3f51b5",
-    "#00b1f2", "#f48024", "#d7263d", "#02c39a", "#f7b731",
-]
-
-_LAYOUT_BASE = dict(
-    template="plotly_dark",
-    paper_bgcolor="rgba(10,15,30,0)",
-    plot_bgcolor="rgba(13,21,48,0.55)",
-    height=500,
-    font=dict(family="system-ui, sans-serif", size=12, color="#8892a4"),
-    legend=dict(
-        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-        font=dict(color="#c0c8d8"),
-    ),
-    xaxis=dict(
-        gridcolor="rgba(0,212,255,0.07)",
-        linecolor="rgba(0,212,255,0.18)",
-        tickfont=dict(color="#8892a4"),
-    ),
-    yaxis=dict(
-        gridcolor="rgba(0,212,255,0.07)",
-        linecolor="rgba(0,212,255,0.18)",
-        tickfont=dict(color="#8892a4"),
-    ),
-    margin=dict(l=10, r=10, t=58, b=10),
-)
-
-
-def line_chart(traces: list, title: str, x_lbl: str, y_lbl: str) -> go.Figure:
-    fig = go.Figure()
-    for t in traces:
-        fig.add_trace(t)
-    fig.update_layout(
-        **_LAYOUT_BASE,
-        title=dict(text=title, font=dict(color="#c0c8d8", size=13)),
-        xaxis_title=x_lbl,
-        yaxis_title=y_lbl,
-    )
-    return fig
-
-
-def scatter_trace(x, y, name: str, color: str) -> go.Scatter:
-    return go.Scatter(
-        x=x, y=y, mode="lines+markers", name=name,
-        line=dict(color=color, width=2),
-        marker=dict(size=4, color=color),
-    )
-
-
-# ── Stat column mappings ──────────────────────────────────────────────────────
-BATTER_STAT_COLS = {
-    "Hits": "H", "Doubles": "2B", "Triples": "3B", "Home Runs": "HR",
-    "Runs": "R", "RBI": "RBI", "Stolen Bases": "SB",
-    "Walks": "BB", "Strikeouts": "SO", "GIDP": "GIDP",
-    "Average": "BA", "On-Base %": "OBP", "Slugging": "SLG", "OPS": "OPS",
-}
-BATTER_RATE_STATS = {"Average", "On-Base %", "Slugging", "OPS"}
-
-PITCHER_STAT_COLS = {
-    "Strikeouts": "SO", "Walks": "BB", "Hits Allowed": "H", "HR Allowed": "HR",
-    "Wins": "W", "Losses": "L", "Saves": "SV", "Innings Pitched": "IP",
-    "ERA": "ERA", "WHIP": "WHIP", "K/9": "K9", "BB/9": "BB9",
-}
-PITCHER_RATE_STATS = {"ERA", "WHIP", "K/9", "BB/9"}
-
-LEAGUE_BAT_COLS = {
-    "Batting Average": "BA_mean",
-    "On-Base %": "OBP_mean",
-    "Slugging": "SLG_mean",
-    "OPS": "OPS_mean",
-    "HR per player": "HR_mean",
-    "Runs per player": "R_mean",
-    "Hits per player": "H_mean",
-    "Walks per player": "BB_mean",
-    "Strikeouts per player": "SO_mean",
-}
-LEAGUE_PIT_COLS = {
-    "ERA": "ERA_mean",
-    "WHIP": "WHIP_mean",
-    "K/9": "K9_mean",
-    "BB/9": "BB9_mean",
-    "Wins per pitcher": "W_mean",
-    "K per pitcher": "SO_mean",
-    "Saves per pitcher": "SV_mean",
-    "CG per pitcher": "CG_mean",
-}
+from src.ui import render_sidebar, render_stat_controls, render_results
 
 
 # ── Player lookup (DB-backed) ─────────────────────────────────────────────────
@@ -336,14 +246,13 @@ with tab_rank:
         top_n = st.slider("Players to show", 5, 50, 25)
         st.divider()
 
-        st.markdown("**Qualification**")
-        if mode == "Batters":
-            min_pa = st.number_input("Min plate appearances", 50, 5_000, 500, step=50)
-            min_ip = 30
-        else:
-            min_ip = st.number_input("Min innings pitched", 10, 3_000, 100, step=10)
-            min_pa = 100
-        st.divider()
+    mode = config["mode"]
+    start_year = config["start_year"]
+    end_year = config["end_year"]
+    position = config["position"]
+    top_n = config["top_n"]
+    min_pa = config["min_pa"]
+    min_ip = config["min_ip"]
 
         st.markdown("**Stats & weights**")
         if mode == "Batters":
@@ -355,15 +264,13 @@ with tab_rank:
             def_stats = DEFAULT_PITCHING_STATS
             def_wts = DEFAULT_PITCHING_WEIGHTS
 
-        sel = st.multiselect(
-            "Stats",
-            list(stat_defs.keys()),
-            default=def_stats,
-            format_func=lambda x: f"{stat_defs[x].short_name} – {stat_defs[x].display_name}",
-        )
-        if not sel:
-            st.warning("Select at least one stat.")
-            sel = def_stats[:1]
+    # Stat selection and weights on main page
+    selected_stats, weights = render_stat_controls(mode)
+
+    st.divider()
+
+    if mode == "Batters":
+        stat_defs = BATTING_STATS
 
         wts = {}
         st.markdown("*Weights — normalized to 100%*")
@@ -508,8 +415,10 @@ with tab_pit:
                 st.warning(f'"{p_p2}" not found — showing {p_p1} only.')
             df2 = get_player_pitching(pid2) if pid2 else None
 
-            col = PITCHER_STAT_COLS[p_stat]
-            is_rate = p_stat in PITCHER_RATE_STATS
+        **Rating (100+ scale)**: Your selected stats are weighted according to the sliders
+        above the results table. The weights are normalized to sum to 100%. The final
+        rating uses a 100-based scale like OPS+ or ERA+: 100 = league average,
+        150 = 50% better than average, 200 = twice as good as average.
 
             x1 = list(range(1, len(df1) + 1)) if p_career else df1["yearID"].tolist()
             x_lbl = "Career Year" if p_career else "Season"

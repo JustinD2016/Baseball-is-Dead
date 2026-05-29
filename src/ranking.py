@@ -34,16 +34,17 @@ def compute_composite_score(
     norm_weights = {s: weights[s] / total_weight for s in selected_stats}
 
     # Compute weighted sum of z-scores
-    df["composite_score"] = 0.0
+    df["composite_zscore"] = 0.0
     for stat_key in selected_stats:
         stat_def = stat_defs[stat_key]
         z_col = stat_def.key  # e.g., "BA_z"
         if z_col in df.columns:
-            df["composite_score"] += df[z_col].fillna(0) * norm_weights[stat_key]
+            df["composite_zscore"] += df[z_col].fillna(0) * norm_weights[stat_key]
 
-    df = df.sort_values("composite_score", ascending=False).reset_index(drop=True)
-    df.index = df.index + 1  # 1-based ranking
-    df.index.name = "Rank"
+    # Convert to 100-based rating (like OPS+/ERA+): 100 = average, each z-score unit = 100 points
+    df["rating"] = (100 + df["composite_zscore"] * 100).round().astype(int)
+
+    df = df.sort_values("composite_zscore", ascending=False).reset_index(drop=True)
 
     return df
 
