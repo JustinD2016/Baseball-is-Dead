@@ -173,5 +173,27 @@ def render_results(results_df, selected_stats, stat_defs, mode):
 
     # Bar chart of top players
     if len(display_df) > 0 and "Player" in display_df.columns and "Score" in display_df.columns:
-        chart_df = display_df.head(min(15, len(display_df)))[["Player", "Score"]].set_index("Player")
-        st.bar_chart(chart_df)
+        import plotly.graph_objects as go
+        top = display_df.head(min(15, len(display_df)))
+        colors = [f"rgba(0,{int(180 + 75 * i / max(len(top)-1,1))},255,0.85)" for i in range(len(top))]
+        fig = go.Figure(go.Bar(
+            x=top["Score"], y=top["Player"],
+            orientation="h",
+            marker=dict(color=colors[::-1]),
+            text=top["Score"].map("{:.3f}".format),
+            textposition="outside",
+            textfont=dict(color="#8892a4", size=11),
+        ))
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(10,15,30,0)",
+            plot_bgcolor="rgba(13,21,48,0.55)",
+            height=max(300, len(top) * 28 + 60),
+            margin=dict(l=10, r=60, t=10, b=10),
+            xaxis=dict(gridcolor="rgba(0,212,255,0.07)", title="Composite Score",
+                       tickfont=dict(color="#8892a4")),
+            yaxis=dict(gridcolor="rgba(0,212,255,0.07)", autorange="reversed",
+                       tickfont=dict(color="#c0c8d8")),
+            showlegend=False,
+        )
+        st.plotly_chart(fig, use_container_width=True)
